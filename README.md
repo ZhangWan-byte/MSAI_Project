@@ -1,14 +1,16 @@
-# SAbDab Data Processing
+# SAbDab
 
-- 1_cdr_seq_IMGT
+## Data Processing
+
+- 1_cdr_seq_IMGT.ipynb
     - ctrl c+v from SAbDab CDR sequence search page，get all heavy/light chains of PDBs and their CDRs
-- 2_data_preprocessing
+- 2_data_preprocessing.ipynb
     - Criterion
         - resolution < 4A
         - have VH, VL and VA
     - sequence_pairs.json has null Hseq
         - capitalize all sequence ids; if the chain is within PDB, then get lower case, else upper case;
-- 3_seqs_structs
+- 3_seqs_structs.ipynb
     - skip processing non-common AAs, such as HOH;
     - some atoms are missed (e.g. C, O), substitute them with first atom in this AA;
         - theoretically it's possible to calculate relative positions of N/CA/C/O in AA, however it's not known how effective it is;
