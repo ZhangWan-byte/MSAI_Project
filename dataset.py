@@ -42,3 +42,9 @@ class GraphDataset(torch.utils.data.Dataset):
             return self.train_data.iloc[idx][0], self.train_data.iloc[idx][1], self.train_label[idx]
         else:
             return self.test_data.iloc[idx][0], self.test_data.iloc[idx][1], self.test_label[idx]
+
+
+if __name__ == "__main__":
+    print("hello world!")
+
+    
