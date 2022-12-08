@@ -266,4 +266,4 @@ class EGHN(nn.Module):
 if __name__ == "__main__":
     model = EGHN(in_node_nf=3, in_edge_nf=2, hidden_nf=16, n_cluster=3)
 
-    x = torch.ones(batch * n, )
+    # x = torch.ones(batch * n, )
