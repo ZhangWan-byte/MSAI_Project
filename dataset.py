@@ -9,8 +9,10 @@ import torch.optim as optim
 class GraphDataset(torch.utils.data.Dataset):
     def __init__(self, data_path="./data.json", seq_length=128, kfold=10, holdout_fold=0, is_train=True):
         self.is_train = is_train
-        self.data = self.get_data(data_path)
+        self.data = pickle.load(open(data_path, "rb"))
         self.total_length = len(data)
+
+        self.data = self.process()
 
         self.data_folds = []
         self.label_folds = []
@@ -26,9 +28,6 @@ class GraphDataset(torch.utils.data.Dataset):
         self.test_label = self.label_folds.pop(holdout_fold)
         self.train_data = pd.concat(self.data_folds)
         self.train_label = torch.hstack(self.label_folds)
-
-    def get_data(self, data_path):
-        self.data = pickle.load(open(data_path, "rb"))
         
 
     def __len__(self):
