@@ -29,6 +29,23 @@ class GraphDataset(torch.utils.data.Dataset):
         self.train_data = pd.concat(self.data_folds)
         self.train_label = torch.hstack(self.label_folds)
         
+    def process(self):
+        # X: [seq_len, 4, 3], coordinates of N, CA, C, O. Missing data are set to 0
+        # S: [seq_len], indices of each residue
+        # L: string of cdr labels, 0 for non-cdr residues, 1 for cdr1, 2 for cdr2, 3 for cdr3 
+        # mask: [seq_len], 1 for not masked, 0 for masked
+
+        for i in range(len(self.data)):
+            Hseq = self.data[i]["Hseq"]
+            Lseq = self.data[i]["Lseq"]
+            Aseq = "/".join(self.data[i]["Aseq"])
+
+            Hpos = self.data[i]["Hpos"]
+            Lpos = self.data[i]["Lpos"]
+            Apos = self.data[i]["Apos"]
+
+
+
 
     def __len__(self):
         if self.is_train==True:
