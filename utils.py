@@ -125,7 +125,7 @@ def get_residue_pos(pdb_path="../SAbDab_20221124/all_structures/raw/7k5y.pdb", c
     structure = p.get_structure('input', pdb_path)
 
     AA_coord = []
-    chain = chain.lower() if chain not in [c.get_id() for c in structure[0].get_list()] else chain.upper()
+    # chain = chain.lower() if chain not in [c.get_id() for c in structure[0].get_list()] else chain.upper()
     for residue in structure[0][chain]:
         if residue.get_resname() not in AA_abbr:
             continue
