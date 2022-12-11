@@ -108,7 +108,8 @@ def process(data):
 
 
 class GraphDataset(torch.utils.data.Dataset):
-    def __init__(self, data=data, seq_length=128, is_train=True, is_kfold=False, kfold=10, val_fold=0):
+    def __init__(self, data, seq_length=128, is_train=True, is_kfold=False, kfold=10, val_fold=0):
+        self.data = data
         self.total_length = len(data)
 
         if is_kfold==True:
