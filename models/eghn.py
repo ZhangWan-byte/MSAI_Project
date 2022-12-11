@@ -5,7 +5,7 @@ from torch import nn
 import torch
 import torch.nn.functional as F
 from torch_sparse import spmm
-from basic import EGNN, EquivariantScalarNet, BaseMLP, aggregate, EGMN
+from models.basic import EGNN, EquivariantScalarNet, BaseMLP, aggregate, EGMN
 
 
 class EquivariantEdgeScalarNet(nn.Module):
