@@ -1,4 +1,5 @@
 import os
+import copy
 import pickle
 import random
 import numpy as np
@@ -25,32 +26,36 @@ def set_seed(seed=42):
 set_seed(seed=42)
 
 
-def get_mask(seq, substrs, is_Hchain=True):
-        # seq: [Hseq]
-        # substrs: [H1, H2, H3]
-        # return [mask_H1, mask_H2, mask_H3]
-        mask = [0] * len(seq)
-        m = 1
-        span = []
-        for substr in substrs:
-            start = seq.find(substr)
-            end = start+len(substr)
-            span.append((start, end))
-            for idx in range(len(mask)):
-                if idx>=start and idx<end:
-                    mask[idx] = m
-            m += 1
-        
-        return mask, span
+def get_mask(seq, substrs):
+    # seq: [Hseq]
+    # substrs: [H1, H2, H3]
+    # return [mask_H1, mask_H2, mask_H3]
+    mask = [0] * len(seq)
+    m = 1
+    span = []
+    for substr in substrs:
+        start = seq.find(substr)
+        end = start+len(substr)
+        span.append((start, end))
+        for idx in range(len(mask)):
+            if idx>=start and idx<end:
+                mask[idx] = m
+        m += 1
+    
+    return mask, span
 
 
 def process(data):
     # input: data
-    # data: dict containing original processed data
-    # return: X, S, mask
-    # X: [seq_len, 4, 3], coordinates of N, CA, C, O. Missing data are set to 0
-    # S: [seq_len], indices of each residue
-    # mask: [Hmask, Lmask] - string of cdr labels, 0 for non-cdr residues, 1 for cdr1, 2 for cdr2, 3 for cdr3 
+    # :data: dict containing original processed data
+
+    # return: [train, val, test]
+    # :train: {"X":X, "S":S, "mask":mask}
+    # :X: [seq_len, 4, 3], coordinates of N, CA, C, O. Missing data are set to 0
+    # :S: [seq_len], indices of each residue
+    # :mask: [Hmask, Lmask] - string of cdr labels, 0 for non-cdr residues, 1 for cdr1, 2 for cdr2, 3 for cdr3 
+
+    data = copy.deepcopy(data)
 
     for i in range(len(data)):
         Hseq = data[i]["Hseq"][0]
@@ -72,12 +77,12 @@ def process(data):
         Lmask, Lspan = get_mask(seq=Lseq, substrs=[data[i]["L1"], data[i]["L2"], data[i]["L3"]])
 
         # sanitisation through checking non-zero elements
-        for cdr in ["H1", "H2", "H3", "L1", "L2", "L3"]:
-            if np.count_nonzero(Hmask) != len(data[i]["H1"])+len(data[i]["H2"])+len(data[i]["H3"]):
-                print("Hcdr disalignment: {} at position {}".format(data[i]["pdb"], i))
+        # for cdr in ["H1", "H2", "H3", "L1", "L2", "L3"]:
+        if np.count_nonzero(Hmask) != len(data[i]["H1"])+len(data[i]["H2"])+len(data[i]["H3"]):
+            print("Hcdr disalignment: {} at position {}".format(data[i]["pdb"], i))
 
-            if np.count_nonzero(Lmask) != len(data[i]["L1"])+len(data[i]["L2"])+len(data[i]["L3"]):
-                print("Lcdr disalignment: {} at position {}".format(data[i]["pdb"], i))
+        if np.count_nonzero(Lmask) != len(data[i]["L1"])+len(data[i]["L2"])+len(data[i]["L3"]):
+            print("Lcdr disalignment: {} at position {}".format(data[i]["pdb"], i))
 
         Hpos_cdr = []
         for idx in range(3):
@@ -102,7 +107,7 @@ def process(data):
 
     # train:val:test = 7:1:2
     train, test = data[:int(0.8*len(data))], data[int(0.8*len(data)):]
-    train, val = train[:int(0.7*len(data))], data[int(0.7*len(data)):]
+    train, val = train[:int(0.7*len(data))], train[int(0.7*len(data)):]
 
     return train, val, test
 
