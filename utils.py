@@ -102,7 +102,9 @@ def get_residue_seqs(pdb_path="../../../MSAI_Project/SAbDab_20221124/all_structu
     
     for chain in chains:
 
-        chain = chain.lower() if chain not in all_chains else chain.upper()        
+        if chain not in all_chains:
+            chain = chain.lower() if chain.lower() in all_chains else chain.upper()
+                
         chains_seqs[chain] = []
     
         for i in range(len(lines)):

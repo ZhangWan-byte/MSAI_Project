@@ -34,8 +34,12 @@ def get_mask(seq, substrs):
     m = 1
     span = []
     for substr in substrs:
-        start = seq.find(substr)
-        end = start+len(substr)
+        if len(span)==0:
+            start = seq.find(substr)
+            end = start+len(substr)
+        else:
+            start = seq.find(substr, span[-1][-1], -1)
+            end = start+len(substr)
         span.append((start, end))
         for idx in range(len(mask)):
             if idx>=start and idx<end:
