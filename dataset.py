@@ -10,7 +10,7 @@ import torch.optim as optim
 
 # codes borrowed from
 # https://wandb.ai/sauravmaheshkar/RSNA-MICCAI/reports/How-to-Set-Random-Seeds-in-PyTorch-and-Tensorflow--VmlldzoxMDA2MDQy
-def set_seed(seed: int = 42):
+def set_seed(seed=42):
     np.random.seed(seed)
     random.seed(seed)
     torch.manual_seed(seed)
@@ -22,6 +22,7 @@ def set_seed(seed: int = 42):
     os.environ["PYTHONHASHSEED"] = str(seed)
     print(f"Random seed set as {seed}")
 
+set_seed(seed=42)
 
 
 def get_mask(seq, substrs, is_Hchain=True):

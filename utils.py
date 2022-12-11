@@ -1,4 +1,6 @@
+import os
 import time
+import random
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -12,6 +14,23 @@ from Bio.PDB.Model import Model as BModel
 from Bio.PDB.Chain import Chain as BChain
 from Bio.PDB.Residue import Residue as BResidue
 from Bio.PDB.Atom import Atom as BAtom
+
+
+# codes borrowed from
+# https://wandb.ai/sauravmaheshkar/RSNA-MICCAI/reports/How-to-Set-Random-Seeds-in-PyTorch-and-Tensorflow--VmlldzoxMDA2MDQy
+def set_seed(seed=42):
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    # When running on the CuDNN backend, two further options must be set
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # Set a fixed value for the hash seed
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    print(f"Random seed set as {seed}")
+
+set_seed(seed=42)
 
 
 AA_abbr = {
