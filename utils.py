@@ -85,19 +85,24 @@ AA_abbr = {
 }
 
 
+AA_abbr_alias = {
+    "MSE": "M",    # abbr of MET
+    "FTR": "W",    # a type of TRP
+    "OAS": "S",    # a type of SER
+    "TYS": "Y",    # a type of TYR
+    "TPO": "T",    # a typr of THR
+    'M': 'MSE', 
+    'W': 'FTR', 
+    'S': 'OAS', 
+    'Y': 'TYS', 
+    'T': 'TPO'
+}
+
 def to_abbr(aa):
     if aa in AA_abbr:
         return AA_abbr[aa]
-    elif aa=="MSE":
-        return "M"    # abbr of MET
-    elif aa=="FTR":
-        return "W"    # a type of TRP
-    elif aa=="OAS":
-        return "S"    # a type of SER
-    elif aa=="TYS":
-        return "Y"    # a type of TYR
-    elif aa=="TPO":
-        return "T"    # a typr of THR
+    elif aa in AA_abbr_alias:
+        return AA_abbr_alias[aa]
     else:
         return AA_abbr["UNK"]
 
@@ -137,9 +142,17 @@ def get_residue_pos(pdb_path="../SAbDab_20221124/all_structures/raw/7k5y.pdb", c
     AA_coord = []
     # chain = chain.lower() if chain not in [c.get_id() for c in structure[0].get_list()] else chain.upper()
     for residue in structure[0][chain]:
-        if residue.get_resname() not in AA_abbr:
-            continue
+        # if residue.get_resname() not in AA_abbr:
+        #     continue
     
+        if (residue.get_resname() not in AA_abbr) and (residue.get_resname() not in AA_abbr_alias):
+            if len(AA_coord)>=1:
+                AA_coord.append(AA_coord[-1])
+            else:
+                AA_coord.append(np.zeros((4, 3)))
+            continue
+
+
         for temp_atom in residue:
             break
 
