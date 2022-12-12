@@ -88,6 +88,16 @@ AA_abbr = {
 def to_abbr(aa):
     if aa in AA_abbr:
         return AA_abbr[aa]
+    elif aa=="MSE":
+        return "M"    # abbr of MET
+    elif aa=="FTR":
+        return "W"    # a type of TRP
+    elif aa=="OAS":
+        return "S"    # a type of SER
+    elif aa=="TYS":
+        return "Y"    # a type of TYR
+    elif aa=="TPO":
+        return "T"    # a typr of THR
     else:
         return AA_abbr["UNK"]
 
