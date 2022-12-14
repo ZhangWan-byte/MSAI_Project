@@ -107,11 +107,15 @@ def to_abbr(aa):
         return AA_abbr["UNK"]
 
 
-def get_residue_seqs(pdb_path="../../../MSAI_Project/SAbDab_20221124/all_structures/raw/1mhp.pdb", chains=["H", "L", "A"], all_chains=None):
+def get_residue_seqs(pdb_path="../../../MSAI_Project/SAbDab_20221124/all_structures/imgt/1mhp.pdb", chains=["H"], all_chains=None):
     
-    with open(pdb_path) as f:
-        lines = f.readlines()
-    f.close()
+    # with open(pdb_path) as f:
+    #     lines = f.readlines()
+    # f.close()
+
+    p = PDBParser()
+
+    structure = p.get_structure('input', pdb_path)
 
     chains_seqs = {}
     
@@ -121,20 +125,56 @@ def get_residue_seqs(pdb_path="../../../MSAI_Project/SAbDab_20221124/all_structu
             chain = chain.lower() if chain.lower() in all_chains else chain.upper()
                 
         chains_seqs[chain] = []
-    
-        for i in range(len(lines)):
-            if lines[i][:6]=="SEQRES" and lines[i][11]==chain:
-                chains_seqs[chain] += lines[i].split()[4:]
-#     print(chains_seqs)
+        AA_coord = []
+        for residue in structure[0][chain]:
+            # get abbr
+            res_name = residue.get_resname()
+            res_abbr = to_abbr(res_name)
 
-    results = []
-    for k in chains_seqs.keys():
-        results.append("".join(list(map(lambda x:to_abbr(x), chains_seqs[k]))))
-    
-    return results
+            # get position
+            # # use coord of previous res
+            # if (residue.get_resname() not in AA_abbr) and (residue.get_resname() not in AA_abbr_alias):
+            #     if len(AA_coord)>=1:
+            #         AA_coord.append(AA_coord[-1])
+            #     else:
+            #         AA_coord.append(np.zeros((4, 3)))
+            #         continue
+
+            # store first atom in residue
+            for temp_atom in residue:
+                break
+
+            # use coord of the first atom if missing
+            try:
+                N_coord = residue['N'].get_coord()
+            except:
+                N_coord = temp_atom.get_coord()
+            try:
+                CA_coord = residue['CA'].get_coord()
+            except:
+                CA_coord = temp_atom.get_coord()
+            try:
+                C_coord = residue['C'].get_coord()
+            except:
+                C_coord = temp_atom.get_coord()
+            try:
+                O_coord = residue['O'].get_coord()
+            except:
+                O_coord = temp_atom.get_coord()
+
+            pos = np.vstack([N_coord, CA_coord, C_coord, O_coord])
+
+            # residue dict
+            res = {"name":res_name, "abbr":res_abbr, "pos":pos}
+
+            AA_coord.append(pos)
+
+            chains_seqs[chain].append(res)
+
+    return chains_seqs
 
 
-def get_residue_pos(pdb_path="../SAbDab_20221124/all_structures/raw/7k5y.pdb", chain="M"):
+def get_residue_pos(pdb_path="../SAbDab_20221124/all_structures/imgt/7k5y.pdb", chain="M"):
     p = PDBParser()
 
     structure = p.get_structure('input', pdb_path)
