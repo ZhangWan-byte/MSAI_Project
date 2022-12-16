@@ -40,6 +40,160 @@ def set_seed(seed=42):
 set_seed(seed=42)
 
 
+# Antibody-Antigen Complex dataset
+class MyDataset(torch.utils.data.Dataset):
+    def __init__(self, file_path, save_dir, num_entry_per_file=-1, random=False):
+        '''
+        file_path: path to the dataset
+        save_dir: directory to save the processed data
+        num_entry_per_file: number of entries in a single file. -1 to save all data into one file 
+                            (In-memory dataset)
+        '''
+        super().__init__()
+
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        
+        self.data: List[AAComplex] = []  # list of ABComplex
+
+        # preprocess
+        self.file_names, self.file_num_entries = [], []
+        self.preprocess(file_path)
+        self.random = random
+
+        # user defined variables
+        self.mode = '111'  # H/L/Antigen, 1 for include, 0 for exclude
+     
+    def __len__(self):
+        return len(self.data)
+
+    ########### load data from file_path and add to self.data ##########
+    def preprocess(self, file_path):
+        '''
+        Load data from file_path and add processed data entries to self.data.
+        '''
+        with open(file_path, 'r') as fin:
+            lines = fin.read().strip().split('\n')
+
+        for line in tqdm(lines):
+            item = json.loads(line)
+            try:
+                protein = Protein.from_pdb(item['pdb_data_path'])
+            except AssertionError as e:
+                print(e, level='ERROR')
+                print(f'parse {item["pdb"]} pdb failed, skip', level='ERROR')
+                continue
+
+            pdb_id, peptides = item['pdb'], protein.peptides
+            self.data.append(AAComplex(pdb_id, peptides, item['heavy_chain'], item['light_chain'], item['antigen_chains']))
+
+
+    ########## override get item ##########
+    def __getitem__(self, idx):
+        item, res = self.data[idx], {}
+        # each item is an instance of ABComplex. res has following entries
+        # X: [seq_len, 4, 3], coordinates of N, CA, C, O. Missing data are set to 0
+        # S: [seq_len], indices of each residue
+        # L: string of cdr labels, 0 for non-cdr residues, 1 for cdr1, 2 for cdr2, 3 for cdr3 
+        # mask: [seq_len], 1 for not masked, 0 for masked
+
+        hc, lc = item.get_heavy_chain(), item.get_light_chain()
+        antigen_chains = item.get_antigen_chains(interface_only=True, cdr=None)
+ 
+        # prepare input
+        chains, begins = [], []
+        if self.mode[0] == '1': # the cdrh3 start pos in a batch should be near (for RefineGNN)
+            chains.append(hc)
+            begins.append(VOCAB.BOH)
+        if self.mode[1] == '1':
+            chains.append(lc)
+            begins.append(VOCAB.BOL)
+        if self.mode[2] == '1':
+            chains.extend(antigen_chains)
+            begins.extend([VOCAB.BOA for _ in antigen_chains])
+        
+        X, S, L, mask = [], [], [], []
+
+        # format input
+        for chain, box in zip(chains, begins):
+            X.append([(0, 0, 0) for _ in range(4)])  # begin symbol has no coordination
+            S.append(VOCAB.symbol_to_idx(box))
+            L.append('0')
+            mask.append(0)  # no coordination data
+            for i in range(len(chain)):  # some chains do not participate
+                residue = chain.get_residue(i)
+                coord = residue.get_coord_map()
+                x, corrupted = [], True
+                for atom in ['N', 'CA', 'C', 'O']:
+                    if atom in coord:
+                        x.append(coord[atom])
+                        corrupted = False  # has an atom of missing coordination
+                    else:
+                        x.append((0, 0, 0))
+                X.append(x)
+                S.append(VOCAB.symbol_to_idx(residue.get_symbol()))
+                L.append('0')  # set 1/2/3 after the whole loop
+                mask.append(0 if corrupted else 1)  # 1 for normal residue, 0 for residue with no coordination data
+            # X.append([(0, 0, 0) for _ in range(4)])  # end symbol
+            # S.append(VOCAB.symbol_to_idx(VOCAB.SEP))
+            # L.append('0')
+            # mask.append(0) # no coordination data
+        # set CDR pos for heavy chain
+        offset = S.index(VOCAB.symbol_to_idx(VOCAB.BOH)) + 1
+
+        for i in range(1, 4):
+            begin, end = item.get_cdr_pos(f'H{i}')
+            begin += offset
+            end += offset
+            for pos in range(begin, end + 1):
+                L[pos] = str(i)
+        L = ''.join(L)
+        res['X'], res['L'], res['S'], res['mask'] = torch.tensor(X), L, torch.tensor(S, dtype=torch.long), torch.tensor(mask)
+
+        return res
+
+    # def rearrange_by(self, cdr='H3', batch_size=32):  # rearrange by the start / end position
+    #     cdr_pos = []
+    #     for i in range(self.num_entry):
+    #         idx = self._check_load_part(i)
+    #         item = self.data[idx]
+    #         cdr_pos.append(item.get_cdr_pos(cdr))
+    #     self.idx_mapping.sort(key=lambda i: cdr_pos[i])
+    #     blocks, cur_block = [], []
+    #     for i in self.idx_mapping:
+    #         cur_block.append(i)
+    #         if len(cur_block) == batch_size:
+    #             blocks.append(cur_block)
+    #             cur_block = []
+    #     if len(cur_block):
+    #         blocks.append(cur_block)
+    #         np.random.shuffle(blocks)
+    #     self.idx_mapping = []
+    #     for block in blocks:
+    #         self.idx_mapping.extend(block)
+
+
+    @classmethod
+    def collate_fn(cls, batch):
+        max_len = 0
+        Xs, Ss, Ls, masks = [], [], [], []
+        for data in batch:
+            max_len = max(max_len, len(data['S']))
+            Xs.append(data['X'])
+            Ss.append(data['S'])
+            Ls.append(data['L'])
+            masks.append(data['mask'])
+        Xs = pad_sequence(Xs, batch_first=True, padding_value=0)
+        Ss = pad_sequence(Ss, batch_first=True, padding_value=VOCAB.get_pad_idx())
+        masks = pad_sequence(masks, batch_first=True, padding_value=0)
+        return {
+            'X': Xs,
+            'S': Ss,
+            'L': Ls,
+            'mask': masks
+        }
+
+
 # use this class to splice the dataset and maintain only one part of it in RAM
 # Antibody-Antigen Complex dataset
 class AACDataset(torch.utils.data.Dataset):

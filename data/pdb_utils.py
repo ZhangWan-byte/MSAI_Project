@@ -2,24 +2,22 @@
 
 # !/usr/bin/python
 # -*- coding:utf-8 -*-
-from collections import defaultdict
-from copy import copy, deepcopy
+import os
 import json
 import math
-import os
-from typing import Dict, List, Optional, Tuple, Union
 import requests
-
 import numpy as np
+from tqdm import tqdm
+from copy import copy, deepcopy
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Union
+
 from Bio.PDB import PDBParser, PDBIO
 from Bio.PDB.Structure import Structure as BStructure
 from Bio.PDB.Model import Model as BModel
 from Bio.PDB.Chain import Chain as BChain
 from Bio.PDB.Residue import Residue as BResidue
 from Bio.PDB.Atom import Atom as BAtom
-from tqdm import tqdm
-
-# from utils.logger import print_log
 
 
 def rotation_matrix_from_vectors(vec1, vec2):
