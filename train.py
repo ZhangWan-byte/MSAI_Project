@@ -55,6 +55,29 @@ def parse():
     return parser.parse_args()
 
 
+def prepare_mymodel(args):
+    from trainer import MCAttTrainer
+    from data import EquiAACDataset
+    from models.MCAttGNN import MCAttModel
+
+    ########### load your train / valid set ###########
+    train_set = EquiAACDataset(args.train_set)
+    train_set.mode = args.mode
+    valid_set = EquiAACDataset(args.valid_set)
+    valid_set.mode = args.mode
+
+    ########## set your collate_fn ##########
+    _collate_fn = EquiAACDataset.collate_fn
+
+    ########## define your model #########
+    n_channel = valid_set[0]['X'].shape[1]
+    model = MCAttModel(
+        args.embed_size, args.hidden_size, n_channel, n_edge_feats=1,
+        n_layers=args.n_layers, cdr_type=args.cdr_type, alpha=args.alpha
+    )
+    return MCAttTrainer, train_set, valid_set, _collate_fn, model
+
+
 def prepare_refine_gnn(args):
     from trainer import RefineGNNTrainer
     from data import AACDataset
@@ -323,7 +346,9 @@ def prepare_efficient_mc_att_nogl(args):
 
 
 def main(args):
-    if args.model == 'refinegnn':
+    if args.model == 'mymodel':
+        prepare_func = prepare_mymodel
+    elif args.model == 'refinegnn':
         prepare_func = prepare_refine_gnn
     elif args.model == 'effmcatt':
         prepare_func = prepare_efficient_mc_att
@@ -349,7 +374,9 @@ def main(args):
         prepare_func = prepare_seq2seq
     else:
         raise NotImplementedError(f'model type {args.model} not implemented')
+    
     Trainer, train_set, valid_set, _collate_fn, model = prepare_func(args)
+    
     if args.local_rank == 0 or args.local_rank == -1:
         print_log(str(args))
         print_log(f'model type: {args.model}, parameters: {sum([p.numel() for p in model.parameters()])}')  # million
