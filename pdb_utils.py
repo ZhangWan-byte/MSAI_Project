@@ -1,7 +1,4 @@
 # modified from https://github.com/THUNLP-MT/MEAN
-# Kong, Xiangzhe, Wenbing Huang, and Yang Liu. 
-# "Conditional antibody design as 3d equivariant graph translation." 
-# arXiv preprint arXiv:2208.06073 (2022).
 
 # !/usr/bin/python
 # -*- coding:utf-8 -*-
