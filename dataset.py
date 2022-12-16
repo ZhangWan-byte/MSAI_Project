@@ -1,181 +1,556 @@
+# modified from https://github.com/THUNLP-MT/MEAN
+# Kong, Xiangzhe, Wenbing Huang, and Yang Liu. 
+# "Conditional antibody design as 3d equivariant graph translation." 
+# arXiv preprint arXiv:2208.06073 (2022).
+
+# !/usr/bin/python
+# -*- coding:utf-8 -*-
+from copy import deepcopy
+import functools
 import os
-import copy
+import json
 import pickle
-import random
+import argparse
+from typing import List
+
 import numpy as np
-
 import torch
-import torch.nn as nn
-import torch.optim as optim
+
+from utils.logger import print_log
+
+########## import your packages below ##########
+from tqdm import tqdm
+import torch
+from torch.nn.utils.rnn import pad_sequence
+
+from pdb_utils import AAComplex, Protein, VOCAB
 
 
-# codes borrowed from
-# https://wandb.ai/sauravmaheshkar/RSNA-MICCAI/reports/How-to-Set-Random-Seeds-in-PyTorch-and-Tensorflow--VmlldzoxMDA2MDQy
-def set_seed(seed=42):
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    # When running on the CuDNN backend, two further options must be set
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    # Set a fixed value for the hash seed
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    print(f"Random seed set as {seed}")
 
-set_seed(seed=42)
+# use this class to splice the dataset and maintain only one part of it in RAM
+# Antibody-Antigen Complex dataset
+class AACDataset(torch.utils.data.Dataset):
+    def __init__(self, file_path, save_dir=None, num_entry_per_file=-1, random=False):
+        '''
+        file_path: path to the dataset
+        save_dir: directory to save the processed data
+        num_entry_per_file: number of entries in a single file. -1 to save all data into one file 
+                            (In-memory dataset)
+        '''
+        super().__init__()
+        if save_dir is None:
+            if not os.path.isdir(file_path):
+                save_dir = os.path.split(file_path)[0]
+            else:
+                save_dir = file_path
+            prefix = os.path.split(file_path)[1]
+            if '.' in prefix:
+                prefix = prefix.split('.')[0]
+            save_dir = os.path.join(save_dir, f'{prefix}_processed')
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        metainfo_file = os.path.join(save_dir, '_metainfo')
+        self.data: List[AAComplex] = []  # list of ABComplex
 
+        # try loading preprocessed files
+        need_process = False
+        try:
+            with open(metainfo_file, 'r') as fin:
+                metainfo = json.load(fin)
+                self.num_entry = metainfo['num_entry']
+                self.file_names = metainfo['file_names']
+                self.file_num_entries = metainfo['file_num_entries']
+        except Exception as e:
+            print_log(f'Faild to load file {metainfo_file}, error: {e}', level='WARN')
+            need_process = True
 
-def get_mask(seq, substrs):
-    # seq: [Hseq]
-    # substrs: [H1, H2, H3]
-    # return [mask_H1, mask_H2, mask_H3]
-    mask = [0] * len(seq)
-    m = 1
-    span = []
-    for substr in substrs:
-        if len(span)==0:
-            start = seq.find(substr)
-            end = start+len(substr)
+        if need_process:
+            # preprocess
+            self.file_names, self.file_num_entries = [], []
+            self.preprocess(file_path, save_dir, num_entry_per_file)
+            self.num_entry = sum(self.file_num_entries)
+
+            metainfo = {
+                'num_entry': self.num_entry,
+                'file_names': self.file_names,
+                'file_num_entries': self.file_num_entries
+            }
+            with open(metainfo_file, 'w') as fout:
+                json.dump(metainfo, fout)
+
+        self.random = random
+        self.cur_file_idx, self.cur_idx_range = 0, (0, self.file_num_entries[0])  # left close, right open
+        self._load_part()
+
+        # user defined variables
+        self.idx_mapping = [i for i in range(self.num_entry)]
+        self.mode = '111'  # H/L/Antigen, 1 for include, 0 for exclude
+
+    def _save_part(self, save_dir, num_entry):
+        file_name = os.path.join(save_dir, f'part_{len(self.file_names)}.pkl')
+        print_log(f'Saving {file_name} ...')
+        file_name = os.path.abspath(file_name)
+        if num_entry == -1:
+            end = len(self.data)
         else:
-            start = seq.find(substr, span[-1][-1], -1)
-            end = start+len(substr)
-        span.append((start, end))
-        for idx in range(len(mask)):
-            if idx>=start and idx<end:
-                mask[idx] = m
-        m += 1
-    
-    return mask, span
+            end = min(num_entry, len(self.data))
+        with open(file_name, 'wb') as fout:
+            pickle.dump(self.data[:end], fout)
+        self.file_names.append(file_name)
+        self.file_num_entries.append(end)
+        self.data = self.data[end:]
 
+    def _load_part(self):
+        f = self.file_names[self.cur_file_idx]
+        print_log(f'Loading preprocessed file {f}, {self.cur_file_idx + 1}/{len(self.file_names)}')
+        with open(f, 'rb') as fin:
+            del self.data
+            self.data = pickle.load(fin)
+        self.access_idx = [i for i in range(len(self.data))]
+        if self.random:
+            np.random.shuffle(self.access_idx)
 
-def process(data, max_length=1000):
-    # input: data
-    # :data: dict containing original processed data
+    def _check_load_part(self, idx):
+        if idx < self.cur_idx_range[0]:
+            while idx < self.cur_idx_range[0]:
+                end = self.cur_idx_range[0]
+                self.cur_file_idx -= 1
+                start = end - self.file_num_entries[self.cur_file_idx]
+                self.cur_idx_range = (start, end)
+            self._load_part()
+        elif idx >= self.cur_idx_range[1]:
+            while idx >= self.cur_idx_range[1]:
+                start = self.cur_idx_range[1]
+                self.cur_file_idx += 1
+                end = start + self.file_num_entries[self.cur_file_idx]
+                self.cur_idx_range = (start, end)
+            self._load_part()
+        idx = self.access_idx[idx - self.cur_idx_range[0]]
+        return idx
+     
+    def __len__(self):
+        return self.num_entry
 
-    # return: [train, val, test]
-    # :train: {"X":X, "S":S, "mask":mask}
-    # :X: [seq_len, 4, 3], coordinates of N, CA, C, O. Missing data are set to 0
-    # :S: [seq_len], indices of each residue
-    # :mask: [Hmask, Lmask] - string of cdr labels, 0 for non-cdr residues, 1 for cdr1, 2 for cdr2, 3 for cdr3 
+    ########### load data from file_path and add to self.data ##########
+    def preprocess(self, file_path, save_dir, num_entry_per_file):
+        '''
+        Load data from file_path and add processed data entries to self.data.
+        Remember to call self._save_data(num_entry_per_file) to control the number
+        of items in self.data (this function will save the first num_entry_per_file
+        data and release them from self.data) e.g. call it when len(self.data) reaches
+        num_entry_per_file.
+        '''
+        with open(file_path, 'r') as fin:
+            lines = fin.read().strip().split('\n')
+        # line_id = 0
+        for line in tqdm(lines):
+            # if line_id < 261:
+            #     line_id += 1
+            #     continue
+            item = json.loads(line)
+            try:
+                protein = Protein.from_pdb(item['pdb_data_path'])
+            except AssertionError as e:
+                print_log(e, level='ERROR')
+                print_log(f'parse {item["pdb"]} pdb failed, skip', level='ERROR')
+                continue
 
-    data_new = [] #copy.deepcopy(data)
+            pdb_id, peptides = item['pdb'], protein.peptides
+            self.data.append(AAComplex(pdb_id, peptides, item['heavy_chain'], item['light_chain'], item['antigen_chains']))
+            if num_entry_per_file > 0 and len(self.data) >= num_entry_per_file:
+                self._save_part(save_dir, num_entry_per_file)
+        if len(self.data):
+            self._save_part(save_dir, num_entry_per_file)
 
-    for i in range(len(data)):
+    ########## override get item ##########
+    def __getitem__(self, idx):
+        idx = self.idx_mapping[idx]
+        idx = self._check_load_part(idx)
+        item, res = self.data[idx], {}
+        # each item is an instance of ABComplex. res has following entries
+        # X: [seq_len, 4, 3], coordinates of N, CA, C, O. Missing data are set to 0
+        # S: [seq_len], indices of each residue
+        # L: string of cdr labels, 0 for non-cdr residues, 1 for cdr1, 2 for cdr2, 3 for cdr3 
+        # mask: [seq_len], 1 for not masked, 0 for masked
 
-        # CDR sequence and position
-        Hseq = data[i]["Hseq"][0]
-        Lseq = data[i]["Lseq"][0]
-
-        H1, H2, H3 = data[i]["H1"], data[i]["H2"], data[i]["H3"]
-        L1, L2, L3 = data[i]["L1"], data[i]["L2"], data[i]["L3"]
-
-        Hpos = data[i]["Hpos"]
-        Lpos = data[i]["Lpos"]        
-
-        Hmask, Hspan = get_mask(seq=Hseq, substrs=[data[i]["H1"], data[i]["H2"], data[i]["H3"]])
-        Lmask, Lspan = get_mask(seq=Lseq, substrs=[data[i]["L1"], data[i]["L2"], data[i]["L3"]])
-
-        # sanitisation through checking non-zero elements
-        # for cdr in ["H1", "H2", "H3", "L1", "L2", "L3"]:
-        if np.count_nonzero(Hmask) != len(data[i]["H1"])+len(data[i]["H2"])+len(data[i]["H3"]):
-            print("Hcdr disalignment: {} at position {}".format(data[i]["pdb"], i))
-            continue
-
-        if np.count_nonzero(Lmask) != len(data[i]["L1"])+len(data[i]["L2"])+len(data[i]["L3"]):
-            print("Lcdr disalignment: {} at position {}".format(data[i]["pdb"], i))
-            continue
-
-        Hpos_cdr = []
-        for idx in range(3):
-            Hpos_cdr.append(Hpos[Hspan[idx][0]:Hspan[idx][1]])
-            if idx < 2:
-                Hpos_cdr.append(np.zeros((4,3)))
+        hc, lc = item.get_heavy_chain(), item.get_light_chain()
+        antigen_chains = item.get_antigen_chains(interface_only=True, cdr=None)
+ 
+        # prepare input
+        chains, begins = [], []
+        if self.mode[0] == '1': # the cdrh3 start pos in a batch should be near (for RefineGNN)
+            chains.append(hc)
+            begins.append(VOCAB.BOH)
+        if self.mode[1] == '1':
+            chains.append(lc)
+            begins.append(VOCAB.BOL)
+        if self.mode[2] == '1':
+            chains.extend(antigen_chains)
+            begins.extend([VOCAB.BOA for _ in antigen_chains])
         
-        Lpos_cdr = []
-        for idx in range(3):
-            Lpos_cdr.append(Lpos[Lspan[idx][0]:Lspan[idx][1]])
-            if idx < 2:
-                Lpos_cdr.append(np.zeros((4,3)))
+        X, S, L, mask = [], [], [], []
+
+        # format input
+        for chain, box in zip(chains, begins):
+            X.append([(0, 0, 0) for _ in range(4)])  # begin symbol has no coordination
+            S.append(VOCAB.symbol_to_idx(box))
+            L.append('0')
+            mask.append(0)  # no coordination data
+            for i in range(len(chain)):  # some chains do not participate
+                residue = chain.get_residue(i)
+                coord = residue.get_coord_map()
+                x, corrupted = [], True
+                for atom in ['N', 'CA', 'C', 'O']:
+                    if atom in coord:
+                        x.append(coord[atom])
+                        corrupted = False  # has an atom of missing coordination
+                    else:
+                        x.append((0, 0, 0))
+                X.append(x)
+                S.append(VOCAB.symbol_to_idx(residue.get_symbol()))
+                L.append('0')  # set 1/2/3 after the whole loop
+                mask.append(0 if corrupted else 1)  # 1 for normal residue, 0 for residue with no coordination data
+            # X.append([(0, 0, 0) for _ in range(4)])  # end symbol
+            # S.append(VOCAB.symbol_to_idx(VOCAB.SEP))
+            # L.append('0')
+            # mask.append(0) # no coordination data
+        # set CDR pos for heavy chain
+        offset = S.index(VOCAB.symbol_to_idx(VOCAB.BOH)) + 1
+
+        for i in range(1, 4):
+            begin, end = item.get_cdr_pos(f'H{i}')
+            begin += offset
+            end += offset
+            for pos in range(begin, end + 1):
+                L[pos] = str(i)
+        L = ''.join(L)
+        res['X'], res['L'], res['S'], res['mask'] = torch.tensor(X), L, torch.tensor(S, dtype=torch.long), torch.tensor(mask)
+
+        return res
+
+    def rearrange_by(self, cdr='H3', batch_size=32):  # rearrange by the start / end position
+        cdr_pos = []
+        for i in range(self.num_entry):
+            idx = self._check_load_part(i)
+            item = self.data[idx]
+            cdr_pos.append(item.get_cdr_pos(cdr))
+        self.idx_mapping.sort(key=lambda i: cdr_pos[i])
+        blocks, cur_block = [], []
+        for i in self.idx_mapping:
+            cur_block.append(i)
+            if len(cur_block) == batch_size:
+                blocks.append(cur_block)
+                cur_block = []
+        if len(cur_block):
+            blocks.append(cur_block)
+            np.random.shuffle(blocks)
+        self.idx_mapping = []
+        for block in blocks:
+            self.idx_mapping.extend(block)
+
+
+    @classmethod
+    def collate_fn(cls, batch):
+        max_len = 0
+        Xs, Ss, Ls, masks = [], [], [], []
+        for data in batch:
+            max_len = max(max_len, len(data['S']))
+            Xs.append(data['X'])
+            Ss.append(data['S'])
+            Ls.append(data['L'])
+            masks.append(data['mask'])
+        Xs = pad_sequence(Xs, batch_first=True, padding_value=0)
+        Ss = pad_sequence(Ss, batch_first=True, padding_value=VOCAB.get_pad_idx())
+        masks = pad_sequence(masks, batch_first=True, padding_value=0)
+        return {
+            'X': Xs,
+            'S': Ss,
+            'L': Ls,
+            'mask': masks
+        }
+
+
+class AACSeqDataset(AACDataset):
+    def __getitem__(self, idx):
+        idx = self.idx_mapping[idx]
+        idx = self._check_load_part(idx)
+        item, res = self.data[idx], {}
+        # each item is an instance of ABComplex. res has following entries
+        # X: [seq_len, 4, 3], coordinates of N, CA, C, O. Missing data are set to 0
+        # S: [seq_len], indices of each residue
+        # L: string of cdr labels, 0 for non-cdr residues, 1 for cdr1, 2 for cdr2, 3 for cdr3 
+        # mask: [seq_len], 1 for not masked, 0 for masked
+
+        hc, lc = item.get_heavy_chain(), item.get_light_chain()
+        antigen_chains = item.get_antigen_chains(interface_only=True, cdr=None)
+
+        # prepare input
+        chains, begins = [], []
+        if self.mode[0] == '1': # the cdrh3 start pos in a batch should be near (for RefineGNN)
+            chains.append(hc)
+            begins.append(VOCAB.BOH)
+        if self.mode[1] == '1':
+            chains.append(lc)
+            begins.append(VOCAB.BOL)
+        if self.mode[2] == '1':
+            chains.extend(antigen_chains)
+            begins.extend([VOCAB.BOA for _ in antigen_chains])
         
-        pos = Hpos_cdr + [np.zeros((4,3))] + Lpos_cdr
-        seq = H1 + "/" + H2 + "/" + H3 + "/" + L1 + "/" + L2 + "/" + L3
+        X, S, L= [], [], []
+
+        # format input
+        for chain, box in zip(chains, begins):
+            X.append([(0, 0, 0) for _ in range(4)])  # begin symbol has no coordination
+            S.append(VOCAB.symbol_to_idx(box))
+            L.append('0')
+            for i in range(len(chain)):  # some chains do not participate
+                residue = chain.get_residue(i)
+                coord = residue.get_coord_map()
+                x = []
+                for atom in ['N', 'CA', 'C', 'O']:
+                    if atom in coord:
+                        x.append(coord[atom])
+                    else:
+                        x.append((0, 0, 0))
+                X.append(x)
+                S.append(VOCAB.symbol_to_idx(residue.get_symbol()))
+                L.append('0')  # set 1/2/3 after the whole loop
+        mask = [1 for _ in L]
+        # set CDR pos for heavy chain
+        offset = S.index(VOCAB.symbol_to_idx(VOCAB.BOH)) + 1
+
+        for i in range(1, 4):
+            begin, end = item.get_cdr_pos(f'H{i}')
+            begin += offset
+            end += offset
+            for pos in range(begin, end + 1):
+                L[pos] = str(i)
+        L = ''.join(L)
+        res['X'], res['L'], res['S'], res['mask'] = torch.tensor(X), L, torch.tensor(S, dtype=torch.long), torch.tensor(mask)
+        return res
+
+    @classmethod
+    def collate_fn(cls, batch):
+        return super().collate_fn(batch)
+
+
+class EquiAACDataset(AACDataset):
+    def __init__(self, file_path, save_dir=None, num_entry_per_file=-1, random=False, ctx_cutoff=8.0, interface_cutoff=12.0):
+        super().__init__(file_path, save_dir, num_entry_per_file, random)
+        self.ctx_cutoff = ctx_cutoff
+        self.interface_cutoff = interface_cutoff
+        self.has_edge_type = True
+        self.has_global_node = True
+        self.has_center = False
+
+    def __getitem__(self, idx):
+        idx = self.idx_mapping[idx]
+        idx = self._check_load_part(idx)
+        item, res = self.data[idx], {}
+        # each item is an instance of ABComplex. res has following entries
+        # X: [seq_len, 5, 3], coordinates of N, CA, C, O, CB, center of side chain. Missing data are set to the average of two ends
+        # S: [seq_len], indices of each residue
+        # L: string of cdr labels, 0 for non-cdr residues, 1 for cdr1, 2 for cdr2, 3 for cdr3 
+
+        hc, lc = item.get_heavy_chain(), item.get_light_chain()
+        antigen_chains = item.get_antigen_chains(interface_only=True, cdr=None)
+
+        # prepare input
+        chain_lists, begins = [], []
+        if self.mode[0] == '1': # the cdrh3 start pos in a batch should be near (for RefineGNN)
+            chain_lists.append([hc])
+            begins.append(VOCAB.BOH)
+        if self.mode[1] == '1':
+            chain_lists.append([lc])
+            begins.append(VOCAB.BOL)
+        if self.mode[2] == '1':
+            chain_lists.append(antigen_chains)
+            begins.append(VOCAB.BOA)
         
+        X, S, = [], []
+        chain_start_ends = []  # tuples of [start, end)
 
-        # antigen sequence and position
-        Aseq = "/".join(data[i]["Aseq"])    # SEP "/"
-        Apos = [achain for achain in data[i]["Apos"]]
+        # format input, box is begin of chain x
+        corrupted_idx = []
+        for chains, box in zip(chain_lists, begins):
+            # judge if the chain has length
+            skip = True
+            for chain in chains:
+                if len(chain):
+                    skip = False
+                    break
+            if skip:
+                continue
+            X.append([(0, 0, 0) for _ in range(5)])  # begin symbol is global symbol, update coordination afterwards
+            S.append(VOCAB.symbol_to_idx(box))
+            start = len(X)
+            for chain in chains:
+                for i in range(len(chain)):  # some chains do not participate
+                    residue = chain.get_residue(i)
+                    coord = residue.get_coord_map()
+                    x = []
+                    for atom in ['N', 'CA', 'C', 'O']:
+                        if atom in coord:
+                            x.append(coord[atom])
+                        else:
+                            coord[atom] = (0, 0, 0)
+                            x.append((0, 0, 0))
+                            corrupted_idx.append(len(X))
+                            # print_log(f'Missing backbone atom coordination: {atom}', level='WARN')
+                    side_chain = residue.get_side_chain_coord_map()
+                    center = [side_chain[atom] for atom in side_chain]
+                    if len(center) == 0:  # GLY or side chain coordination missing
+                        center = coord['CA']
+                    else:
+                        center = np.mean(center, axis=0)
+                    x.append(center)
 
-        # insert zeros as positions of "SEP" -- "/" for antigen chain
-        if len(Apos)>1:
-            Apos = [np.zeros((4,3)).astype(np.float32) if idx%2==0 else ele for idx,ele in enumerate(Apos)]
-            Apos = Apos[:-1] if len(Apos)%2==0 else Apos
+                    X.append(np.array(x))
+                    S.append(VOCAB.symbol_to_idx(residue.get_symbol()))
+            X[start - 1] = np.mean(X[start:], axis=0)  # coordinate of global node
+            chain_start_ends.append((start - 1, len(X)))
 
-        # fix length antigen chain
-        # assert len(Aseq)==len(Apos[0]), "length disalignment of seqeunce and position"
-        if len(Aseq)!=len(Apos[0]):
-            # print(len(Aseq), Aseq)
-            # print(len(Apos), Apos)
-            continue
+        # deal with corrupted coordinates
+        for i in corrupted_idx:
+            l, r = i - 1, i + 1
+            if l > 0 and r < len(X):  # if at start / end, then leave it be
+                X[i] = (X[l] + X[r]) / 2
 
-        if len(Aseq) > max_length:
-            random.seed(42)
-            Aseq = random.sample(Aseq, max_length)
-            Apos = random.sample(Apos[0], max_length)
+        # set CDR pos for heavy chain
+        offset = S.index(VOCAB.symbol_to_idx(VOCAB.BOH)) + 1
+        L = ['0' for _ in X]
+
+        for i in range(1, 4):
+            begin, end = item.get_cdr_pos(f'H{i}')
+            begin += offset
+            end += offset
+            for pos in range(begin, end + 1):
+                L[pos] = str(i)
+
+        res = {
+            'X': torch.tensor(X, dtype=torch.float), # 3d coordination [n_node, 5, 3]
+            'S': torch.tensor(S, dtype=torch.long),  # 1d sequence     [n_node]
+            'L': ''.join(L)                          # cdr annotation, str of length n_node, 1 / 2 / 3 for cdr H1/H2/H3
+        }
+        if not self.has_center: # no side chain center
+            res['X'] = res['X'][:, :-1, :]
+        return res
+
+    @classmethod
+    def collate_fn(cls, batch):
+        Xs, Ss, Ls = [], [], []
+        offsets = [0]
+        for i, data in enumerate(batch):
+            Xs.append(data['X'])
+            Ss.append(data['S'])
+            Ls.append(data['L'])
+            offsets.append(offsets[-1] + len(Ss[i]))
+
+        return {
+            'X': torch.cat(Xs, dim=0),  # [n_all_node, 5, 3]
+            'S': torch.cat(Ss, dim=0),  # [n_all_node]
+            'L': Ls,
+            'offsets': torch.tensor(offsets, dtype=torch.long)
+        }
 
 
-        # append to list
-        data_new.append({"X":pos, "S":seq, "mask":[Hmask, Lmask], "AX":Apos, "AS":Aseq})
+class ITAWrapper(torch.utils.data.Dataset):
+    def __init__(self, dataset, n_samples, _cmp=lambda score1, score2: score1 - score2):
+        super().__init__()
+        self.dataset = deepcopy(dataset)
+        self.dataset._check_load_part = lambda idx: idx
+        self.candidates = [[(self.dataset.data[i], 0)] for i in self.dataset.idx_mapping]
+        self.n_samples = n_samples
+        self.cmp = _cmp
 
-    random.seed(42)
-    random.shuffle(data_new)
+    def _cmp_wrapper(self, a, b):  # tuple of (cplx, score)
+        return self.cmp(a[1], b[1])
 
-    # train:val:test = 7:1:2
-    train, test = data_new[:int(0.8*len(data_new))], data_new[int(0.8*len(data_new)):]
-    train, val = train[:int(0.7*len(data_new))], train[int(0.7*len(data_new)):]
+    def update_candidates(self, i, candidates): # tuple of (cplx, score)
+        all_cand = candidates + self.candidates[i]
+        all_cand.sort(key=functools.cmp_to_key(self._cmp_wrapper))
+        self.candidates[i] = all_cand[:self.n_samples]
 
-    return train, val, test
+    def finish_update(self):  # update all candidates to dataset
+        data, idx_mapping = [], []
+        for candidates in self.candidates:
+            for cand, score in candidates:
+                idx_mapping.append(len(data))
+                data.append(cand)
+        self.dataset.data = data
+        self.dataset.idx_mapping = idx_mapping
 
-
-class GraphDataset(torch.utils.data.Dataset):
-    def __init__(self, data, seq_length=128, is_kfold=False, kfold=10, val_fold=0):
-        self.data = data
-        self.total_length = len(data)
-
-        if is_kfold==True:
-            self.kfold = kfold
-            self.val_fold = val_fold
-        
-            self.data_folds = []
-            self.label_folds = []
-            for k in range(kfold):
-                data_tmp = self.data[k*int(0.1*self.data.shape[0]):(k+1)*int(0.1*self.data.shape[0])]
-                label_tmp = self.label[k*int(0.1*self.label.shape[0]):(k+1)*int(0.1*self.label.shape[0])]
-                self.data_folds.append(data_tmp)
-                self.label_folds.append(label_tmp)
-        
-            self.test_data = self.data_folds.pop(holdout_fold)
-            self.test_label = self.label_folds.pop(holdout_fold)
-            self.train_data = pd.concat(self.data_folds)
-            self.train_label = torch.hstack(self.label_folds)
-        else:
-            pass
-
+    def __getitem__(self, idx):
+        return self.dataset.__getitem__(idx)
 
     def __len__(self):
-        if self.is_kfold==True:
-            return self.train_data.shape[0]
-        else:
-            return self.test_data.shape[0]
+        return len(self.dataset)
+
+    def collate_fn(self, batch):
+        return self.dataset.collate_fn(batch)
+
+
+def parse():
+    parser = argparse.ArgumentParser(description='Process data')
+    parser.add_argument('--dataset', type=str, required=True, help='dataset')
+    parser.add_argument('--save_dir', type=str, default=None, help='Path to save processed data')
+    return parser.parse_args()
+ 
+
+if __name__ == '__main__':
+    from torch.utils.data import DataLoader
+    args = parse()
+    # dataset = AACDataset(args.dataset, args.save_dir, num_entry_per_file=-1)
+    dataset = EquiAACDataset(args.dataset, args.save_dir, num_entry_per_file=-1)
+    print(len(dataset))
+    # data = dataset[0]
+    # for key in data:
+    #     print(f'{key}: {len(data[key])}')
+    #     print(data[key])
+
+    # # statistic length
+    # stats = {'X': [], 'ctx_E': [], 'inter_E': []}
+    # for item in dataset:
+    #     stats['X'].append(len(item['X']))
+    #     stats['ctx_E'].append(item['ctx_edges'].shape[1])
+    #     stats['inter_E'].append(item['inter_edges'].shape[1])
+    # for key in stats:
+    #     print(f'{key}: {np.mean(stats[key])}, max: {np.max(stats[key])}')
+
+    # # # length
+    # # length, fit_cnt, th = [], 0, 450
+    # # for item in dataset:
+    # #     length.append(len(item['X']))
+    # #     if length[-1] < th:
+    # #         fit_cnt += 1
+    # # print(f'len mean: {np.mean(length)}, min: {min(length)}, max: {max(length)}')
+    # # # print(f'suitable cnt: {fit_cnt}')
+
+    # lx, lh, lhi, ll, lli = [], [], [], [], []
+    # for cplx in dataset.data:
+    #     x = 0
+    #     chains = cplx.get_antigen_chains(interface_only=True, cdr=None)
+    #     for chain in chains:
+    #         x += len(chain)
+    #     lx.append(x)
+    #     lh.append(len(cplx.get_heavy_chain()))
+    #     ll.append(len(cplx.get_light_chain()))
+    #     lhi.append(len(cplx.get_heavy_chain(interface_only=False)))
+    #     lli.append(len(cplx.get_light_chain(interface_only=False)))
+    # for name, lens in zip(['antigen', 'heavy', 'heavy_in', 'light', 'light_in'], [lx, lh, lhi, ll, lli]):
+    #     print(f'{name} mean: {np.mean(lens)}, min: {min(lens)}, max: {max(lens)}')
+
     
-    def __getitem__(self, idx):
-        if self.is_train==True:
-            return self.train_data.iloc[idx][0], self.train_data.iloc[idx][1], self.train_label[idx]
-        else:
-            return self.test_data.iloc[idx][0], self.test_data.iloc[idx][1], self.test_label[idx]
+    # # check dataloader
+    # loader = DataLoader(dataset, batch_size=2, collate_fn=dataset.collate_fn)
+    # for batch in loader:
+    #     print(batch)
+    #     break
 
-
-if __name__ == "__main__":
-    print("hello world!")
-
-    
+    # antigen_cnt = {}
+    # for item in dataset:
+    #     s = str(item.antigen)
+    #     if s not in antigen_cnt:
+    #         antigen_cnt[s] = 0
+    #     antigen_cnt[s] += 1
+    # print(f'number of unique antigen: {len(antigen_cnt)}')        

@@ -1,5 +1,6 @@
-# codes borrowed from https://github.com/hanjq17/EGHN/blob/main/model/basic.py
-# paper Han, Jiaqi, et al. "Equivariant Graph Hierarchy-Based Neural Networks." arXiv preprint arXiv:2202.10643 (2022).
+# modified from https://github.com/hanjq17/EGHN/blob/main/model/basic.py
+# Han, Jiaqi, et al. "Equivariant Graph Hierarchy-Based Neural Networks." 
+# arXiv preprint arXiv:2202.10643 (2022).
 
 from torch import nn
 import torch
