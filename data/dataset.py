@@ -23,25 +23,36 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.utils.rnn import pad_sequence
 
-sys.path.append("../")
+sys.path.append("D:/NTU/MSAI_Project/codes/")
 from utils import set_seed
 set_seed(seed=42)
 
 
 # Antibody-Antigen Complex dataset
 class MyDataset(torch.utils.data.Dataset):
-    def __init__(self, file_path, random=False):
+    def __init__(self, file_path, need_preprocess=False, save_path=None):
         '''
         file_path: path to the dataset
+        need_preprocess: true if need preprocessing
+        save_path: path to save the preprocessed data
         '''
         super().__init__()
         
         self.data: List[AAComplex] = []  # list of ABComplex
 
+        # try loading
+        print("need_preprocess: ", need_preprocess)
+        if need_preprocess==False:
+            with open(file_path, "rb") as fin:
+                self.data = pickle.load(fin)
         # preprocess
-        self.file_names, self.file_num_entries = [], []
-        self.preprocess(file_path)
-        self.random = random
+        else:
+            self.preprocess(file_path)
+
+            # save preprocessed data
+            print("save data to {}".format(save_path))
+            with open(save_path, 'wb') as fout:
+                pickle.dump(self.data, fout)
 
         # user defined variables
         self.mode = '111'  # H/L/Antigen, 1 for include, 0 for exclude
@@ -619,19 +630,20 @@ class ITAWrapper(torch.utils.data.Dataset):
         return self.dataset.collate_fn(batch)
 
 
-def parse():
+def myparse():
     parser = argparse.ArgumentParser(description='Process data')
     parser.add_argument('--dataset', type=str, required=True, help='dataset')
-    parser.add_argument('--save_dir', type=str, default=None, help='Path to save processed data')
+    parser.add_argument('--preprocess', type=bool, default=False, help='need preprocess')
+    parser.add_argument('--save_path', type=str, default=None, help='Path to save processed data')
     return parser.parse_args()
- 
+
 
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
-    args = parse()
-    dataset = MyDataset(args.dataset, args.save_dir)
-    # dataset = AACDataset(args.dataset, args.save_dir, num_entry_per_file=-1)
-    # dataset = EquiAACDataset(args.dataset, args.save_dir, num_entry_per_file=-1)
+    args = myparse()
+    dataset = MyDataset(args.dataset, args.preprocess, args.save_path)
+    # dataset = AACDataset(args.dataset, args.save_path, num_entry_per_file=-1)
+    # dataset = EquiAACDataset(args.dataset, args.save_path, num_entry_per_file=-1)
     print(len(dataset))
 
     # data = dataset[0]
@@ -672,11 +684,11 @@ if __name__ == '__main__':
     #     print(f'{name} mean: {np.mean(lens)}, min: {min(lens)}, max: {max(lens)}')
 
     
-    # # check dataloader
-    # loader = DataLoader(dataset, batch_size=2, collate_fn=dataset.collate_fn)
-    # for batch in loader:
-    #     print(batch)
-    #     break
+    # check dataloader
+    loader = DataLoader(dataset, batch_size=2, collate_fn=dataset.collate_fn)
+    for batch in loader:
+        print(batch)
+        break
 
     # antigen_cnt = {}
     # for item in dataset:
