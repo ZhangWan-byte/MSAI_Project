@@ -37,7 +37,7 @@ def parse():
                         help="Local rank. Necessary for using the torch.distributed.launch utility.")
 
     # model
-    parser.add_argument('--model', type=str, choices=['refinegnn', 'mcatt', 'mcegnn', \
+    parser.add_argument('--model', type=str, choices=['mymodel', 'refinegnn', 'mcatt', 'mcegnn', \
                         'seq2seq', 'mcatt_noet', 'mcatt_nogl', 'mcatt_nocenter', \
                         'effmcatt', 'effpuremcatt', 'effmcatt_noet', 'effmcatt_nogl', \
                         'effmcegnn'],
@@ -56,9 +56,9 @@ def parse():
 
 
 def prepare_mymodel(args):
-    from trainer import MCAttTrainer
-    from data import EquiAACDataset
-    from models.MCAttGNN import MCAttModel
+    from trainer import MymodelTrainer
+    from data import MyDataset
+    from models.mymodel import MyModel
 
     ########### load your train / valid set ###########
     train_set = EquiAACDataset(args.train_set)
@@ -390,6 +390,7 @@ def main(args):
             print_log(f'Batch size on a single GPU: {args.batch_size}')
     else:
         train_sampler = None
+    
     train_loader = DataLoader(train_set, batch_size=args.batch_size,
                               num_workers=args.num_workers,
                               shuffle=(args.shuffle and train_sampler is None),
