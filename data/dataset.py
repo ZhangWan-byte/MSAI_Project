@@ -42,17 +42,11 @@ set_seed(seed=42)
 
 # Antibody-Antigen Complex dataset
 class MyDataset(torch.utils.data.Dataset):
-    def __init__(self, file_path, save_dir, num_entry_per_file=-1, random=False):
+    def __init__(self, file_path, random=False):
         '''
         file_path: path to the dataset
-        save_dir: directory to save the processed data
-        num_entry_per_file: number of entries in a single file. -1 to save all data into one file 
-                            (In-memory dataset)
         '''
         super().__init__()
-
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
         
         self.data: List[AAComplex] = []  # list of ABComplex
 
@@ -151,26 +145,6 @@ class MyDataset(torch.utils.data.Dataset):
         res['X'], res['L'], res['S'], res['mask'] = torch.tensor(X), L, torch.tensor(S, dtype=torch.long), torch.tensor(mask)
 
         return res
-
-    # def rearrange_by(self, cdr='H3', batch_size=32):  # rearrange by the start / end position
-    #     cdr_pos = []
-    #     for i in range(self.num_entry):
-    #         idx = self._check_load_part(i)
-    #         item = self.data[idx]
-    #         cdr_pos.append(item.get_cdr_pos(cdr))
-    #     self.idx_mapping.sort(key=lambda i: cdr_pos[i])
-    #     blocks, cur_block = [], []
-    #     for i in self.idx_mapping:
-    #         cur_block.append(i)
-    #         if len(cur_block) == batch_size:
-    #             blocks.append(cur_block)
-    #             cur_block = []
-    #     if len(cur_block):
-    #         blocks.append(cur_block)
-    #         np.random.shuffle(blocks)
-    #     self.idx_mapping = []
-    #     for block in blocks:
-    #         self.idx_mapping.extend(block)
 
 
     @classmethod
@@ -667,9 +641,11 @@ def parse():
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
     args = parse()
+    dataset = MyDataset(args.dataset, args.save_dir)
     # dataset = AACDataset(args.dataset, args.save_dir, num_entry_per_file=-1)
-    dataset = EquiAACDataset(args.dataset, args.save_dir, num_entry_per_file=-1)
+    # dataset = EquiAACDataset(args.dataset, args.save_dir, num_entry_per_file=-1)
     print(len(dataset))
+
     # data = dataset[0]
     # for key in data:
     #     print(f'{key}: {len(data[key])}')
