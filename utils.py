@@ -98,6 +98,7 @@ AA_abbr_alias = {
     'T': 'TPO'
 }
 
+
 def to_abbr(aa):
     if aa in AA_abbr:
         return AA_abbr[aa]

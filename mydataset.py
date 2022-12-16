@@ -1,29 +1,21 @@
 import os
+import json
 import copy
+import numpy as np
 import pickle
 import random
-import numpy as np
+import argparse
+import functools
+
+from tqdm import tqdm
+from copy import deepcopy
+from typing import List
+from pdb_utils import AAComplex, Protein, VOCAB
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-
-# codes borrowed from
-# https://wandb.ai/sauravmaheshkar/RSNA-MICCAI/reports/How-to-Set-Random-Seeds-in-PyTorch-and-Tensorflow--VmlldzoxMDA2MDQy
-def set_seed(seed=42):
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    # When running on the CuDNN backend, two further options must be set
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    # Set a fixed value for the hash seed
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    print(f"Random seed set as {seed}")
-
-set_seed(seed=42)
+from torch.nn.utils.rnn import pad_sequence
 
 
 def get_mask(seq, substrs):

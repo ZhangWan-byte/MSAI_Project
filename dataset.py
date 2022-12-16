@@ -5,26 +5,43 @@
 
 # !/usr/bin/python
 # -*- coding:utf-8 -*-
-from copy import deepcopy
-import functools
+
+
 import os
 import json
-import pickle
-import argparse
-from typing import List
-
+import copy
 import numpy as np
-import torch
+import pickle
+import random
+import argparse
+import functools
 
-from utils.logger import print_log
-
-########## import your packages below ##########
 from tqdm import tqdm
-import torch
-from torch.nn.utils.rnn import pad_sequence
-
+from copy import deepcopy
+from typing import List
 from pdb_utils import AAComplex, Protein, VOCAB
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.nn.utils.rnn import pad_sequence
+
+
+# codes borrowed from
+# https://wandb.ai/sauravmaheshkar/RSNA-MICCAI/reports/How-to-Set-Random-Seeds-in-PyTorch-and-Tensorflow--VmlldzoxMDA2MDQy
+def set_seed(seed=42):
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    # When running on the CuDNN backend, two further options must be set
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # Set a fixed value for the hash seed
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    print(f"Random seed set as {seed}")
+
+set_seed(seed=42)
 
 
 # use this class to splice the dataset and maintain only one part of it in RAM
