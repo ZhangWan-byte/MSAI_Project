@@ -134,12 +134,29 @@ class MyDataset(torch.utils.data.Dataset):
         # set CDR pos for heavy chain
         offset = S.index(VOCAB.symbol_to_idx(VOCAB.BOH)) + 1
 
+
+        # 2022.12.29
+        offset1 = S.index(VOCAB.symbol_to_idx(VOCAB.BOL)) + 1
+        # 2022.12.29
+
+
         for i in range(1, 4):
             begin, end = item.get_cdr_pos(f'H{i}')
             begin += offset
             end += offset
             for pos in range(begin, end + 1):
                 L[pos] = str(i)
+
+
+            # 2022.12.29
+            begin, end = item.get_cdr_pos(f'L{i}')
+            begin += offset1
+            end += offset1
+            for pos in range(begin, end + 1):
+                L[pos] = str(i+3)
+            # 2022.12.29
+
+
         L = ''.join(L)
         res['X'], res['L'], res['S'], res['mask'] = torch.tensor(X), L, torch.tensor(S, dtype=torch.long), torch.tensor(mask)
 
